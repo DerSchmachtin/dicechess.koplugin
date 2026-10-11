@@ -69,7 +69,7 @@ local CLOCK_FONT_SIZE = 22
 -- from 30 seconds to 5 minutes. Any other time can be set as a custom value.
 local CLOCK_TIME_CHOICES = { 30, 45, 60, 90, 120, 180, 300 }
 -- Seconds a player gets back for each move they make.
-local CLOCK_BONUS_CHOICES = { 0, 1, 2, 3, 5, 10 }
+local CLOCK_BONUS_CHOICES = { 0, 0.5, 1, 1.5, 2, 3, 5 }
 
 local CLOCK_ON_SETTING = "dicechess_clock_on"
 local CLOCK_TIME_SETTING = "dicechess_clock_seconds"
@@ -352,7 +352,8 @@ local function clockBonus()
 end
 
 local function bonusText(seconds)
-    return string.format(_("+%d s"), seconds)
+    -- Half seconds are allowed, so only show a decimal when there is one.
+    return string.format(_("+%s s"), seconds % 1 == 0 and string.format("%d", seconds) or string.format("%.1f", seconds))
 end
 
 function DiceChessWidget:showMenu()
@@ -498,7 +499,9 @@ function DiceChessWidget:showClockBonusMenu()
                 value = current,
                 value_min = 0,
                 value_max = 120,
-                value_hold_step = 10,
+                value_step = 0.5,
+                value_hold_step = 5,
+                precision = "%.1f",
                 unit = _("s"),
                 ok_always_enabled = true,
                 callback = function(spin)

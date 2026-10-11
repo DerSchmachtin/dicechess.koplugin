@@ -25,7 +25,7 @@ Open it from **Tools → More tools → Dice Chess**.
 **Chess clock** (optional): choose **Chess clock** in the ☰ menu to switch it on and set it up.
 
 - **Time per player**: 0:30, 0:45, 1:00, 1:30, 2:00, 3:00 or 5:00, or any other time under **Custom**. Choosing a time resets both clocks.
-- **Bonus per move**: the seconds a player gets back for each move they make (0, 1, 2, 3, 5 or 10, or a custom value). A forfeited roll earns no bonus.
+- **Bonus per move**: the seconds a player gets back for each move they make (0, 0.5, 1, 1.5, 2, 3 or 5, or a custom value in half-second steps). A forfeited roll earns no bonus.
 
 Each player's clock sits beside the board at their own end (Black's is upside-down), and the running one has a thick border. White's clock starts with the first roll, a clock runs for the whole turn including a forfeited roll, and it pauses while the plugin is closed. Running out of time loses the game.
 
