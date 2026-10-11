@@ -22,6 +22,8 @@ Open it from **Tools → More tools → Dice Chess**.
 
 **New Game** is in the menu at the top left (☰) and starts over after a confirmation. Closing the plugin keeps the game: reopening it continues where you left off, until KOReader itself is restarted.
 
+**Chess clock** (optional): choose **Chess clock** in the ☰ menu and pick 5, 10, 15 or 30 minutes per player, or Off. Each player's clock sits beside the board at their own end (Black's is upside-down), and the running one has a thick border. White's clock starts with the first roll, a clock runs for the whole turn including a forfeited roll, and it pauses while the plugin is closed. Running out of time loses the game. Choosing a time resets both clocks.
+
 White sits at the bottom edge, Black at the top. Each player has their own status line at their edge (Black's is upside-down), and the Roll Dice and piece-choice buttons only appear at the edge of the player whose turn it is; the other player sees "Waiting for …". The columns are labelled with die faces instead of digits, so they read the same from both seats.
 
 ## Install
