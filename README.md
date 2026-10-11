@@ -17,12 +17,17 @@ Open it from **Tools → More tools → Dice Chess**.
 
 1. **Draft**: your status line says what to do ("White: place your King", then "choose a piece"). Pick a piece and tap a free square on your back row. Until you place it you can still pick a different piece.
 2. **Roll**: tap **Roll Dice**. The rolled column's die face above and below the board turns black, and every piece you may move gets a thick border.
-3. **Move**: tap one of those pieces, then tap the square to move it to. Empty target squares show a dot, capturable pieces a thick border on gray. If only one piece can move it is selected for you. If nothing in that column can move, the turn passes: the status line says so and the forfeited die face stays gray until the next roll.
+3. **Move**: tap one of those pieces, then tap the square to move it to. Empty target squares show a dot, capturable pieces a thick border on gray. If nothing in that column can move, the turn passes: the status line says so and the forfeited die face stays gray until the next roll.
 4. **Promotion**: a pawn reaching the far row gets a choice of Queen, Rook, Bishop or Knight.
 
 **New Game** is in the menu at the top left (☰) and starts over after a confirmation. Closing the plugin keeps the game: reopening it continues where you left off, until KOReader itself is restarted.
 
-**Chess clock** (optional): choose **Chess clock** in the ☰ menu and pick 5, 10, 15 or 30 minutes per player, or Off. Each player's clock sits beside the board at their own end (Black's is upside-down), and the running one has a thick border. White's clock starts with the first roll, a clock runs for the whole turn including a forfeited roll, and it pauses while the plugin is closed. Running out of time loses the game. Choosing a time resets both clocks.
+**Chess clock** (optional): choose **Chess clock** in the ☰ menu to switch it on and set it up.
+
+- **Time per player**: 0:30, 0:45, 1:00, 1:30, 2:00, 3:00 or 5:00, or any other time under **Custom**. Choosing a time resets both clocks.
+- **Bonus per move**: the seconds a player gets back for each move they make (0, 1, 2, 3, 5 or 10, or a custom value). A forfeited roll earns no bonus.
+
+Each player's clock sits beside the board at their own end (Black's is upside-down), and the running one has a thick border. White's clock starts with the first roll, a clock runs for the whole turn including a forfeited roll, and it pauses while the plugin is closed. Running out of time loses the game.
 
 White sits at the bottom edge, Black at the top. Each player has their own status line at their edge (Black's is upside-down), and the Roll Dice and piece-choice buttons only appear at the edge of the player whose turn it is; the other player sees "Waiting for …". The columns are labelled with die faces instead of digits, so they read the same from both seats.
 

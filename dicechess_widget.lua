@@ -17,6 +17,7 @@ local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
+local DoubleSpinWidget = require("ui/widget/doublespinwidget")
 local Flip = require("dicechess_fliptext")
 local Font = require("ui/font")
 local FrameContainer = require("ui/widget/container/framecontainer")
@@ -27,6 +28,7 @@ local HorizontalSpan = require("ui/widget/horizontalspan")
 local InputContainer = require("ui/widget/container/inputcontainer")
 local Rules = require("dicechess_rules")
 local Size = require("ui/size")
+local SpinWidget = require("ui/widget/spinwidget")
 local TextBoxWidget = require("ui/widget/textboxwidget")
 local TextWidget = require("ui/widget/textwidget")
 local TitleBar = require("ui/widget/titlebar")
@@ -63,9 +65,17 @@ local MESSAGE_FONT_SIZE = 17
 local DICE_FONT_SIZE = 26
 local CLOCK_FONT_SIZE = 22
 
--- Minutes per player offered in the menu; 0 switches the clock off.
-local CLOCK_CHOICES = { 0, 5, 10, 15, 30 }
-local CLOCK_SETTING = "dicechess_clock_minutes"
+-- Seconds per player offered in the menu, spaced roughly logarithmically
+-- from 30 seconds to 5 minutes. Any other time can be set as a custom value.
+local CLOCK_TIME_CHOICES = { 30, 45, 60, 90, 120, 180, 300 }
+-- Seconds a player gets back for each move they make.
+local CLOCK_BONUS_CHOICES = { 0, 1, 2, 3, 5, 10 }
+
+local CLOCK_ON_SETTING = "dicechess_clock_on"
+local CLOCK_TIME_SETTING = "dicechess_clock_seconds"
+local CLOCK_BONUS_SETTING = "dicechess_clock_bonus"
+local CLOCK_TIME_DEFAULT = 120
+local CLOCK_BONUS_DEFAULT = 2
 
 -- Everything that makes up a game in progress. Copied out when the widget
 -- closes and back in when it is reopened, so closing does not lose the game.
@@ -333,14 +343,23 @@ function DiceChessWidget:newGame()
     self:render("full")
 end
 
-local function clockChoiceText(minutes)
-    if minutes == 0 then
-        return _("Off")
-    end
-    return string.format(_("%d min"), minutes)
+local function clockTime()
+    return G_reader_settings:readSetting(CLOCK_TIME_SETTING, CLOCK_TIME_DEFAULT)
+end
+
+local function clockBonus()
+    return G_reader_settings:readSetting(CLOCK_BONUS_SETTING, CLOCK_BONUS_DEFAULT)
+end
+
+local function bonusText(seconds)
+    return string.format(_("+%d s"), seconds)
 end
 
 function DiceChessWidget:showMenu()
+    local clock_text = _("Chess clock: off")
+    if G_reader_settings:isTrue(CLOCK_ON_SETTING) then
+        clock_text = string.format(_("Chess clock: %s %s"), formatClock(clockTime()), bonusText(clockBonus()))
+    end
     local dialog
     dialog = ButtonDialog:new{
         buttons = {
@@ -355,8 +374,7 @@ function DiceChessWidget:showMenu()
             },
             {
                 {
-                    text = string.format(_("Chess clock: %s"),
-                        clockChoiceText(G_reader_settings:readSetting(CLOCK_SETTING, 0))),
+                    text = clock_text,
                     callback = function()
                         UIManager:close(dialog)
                         self:showClockMenu()
@@ -369,30 +387,125 @@ function DiceChessWidget:showMenu()
 end
 
 function DiceChessWidget:showClockMenu()
-    local current = G_reader_settings:readSetting(CLOCK_SETTING, 0)
+    local on = G_reader_settings:isTrue(CLOCK_ON_SETTING)
     local dialog
-    local buttons = {}
-    for _, minutes in ipairs(CLOCK_CHOICES) do
-        local text = clockChoiceText(minutes)
-        if minutes == current then
-            text = text .. "  ✓"
-        end
-        table.insert(buttons, {
+    dialog = ButtonDialog:new{
+        title = _("Chess clock"),
+        title_align = "center",
+        buttons = {
             {
-                text = text,
-                callback = function()
-                    UIManager:close(dialog)
-                    self:setClockMinutes(minutes)
-                end,
+                {
+                    text = on and _("Switch off") or _("Switch on"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        self:setClock(not on)
+                    end,
+                },
             },
+            {
+                {
+                    text = string.format(_("Time per player: %s"), formatClock(clockTime())),
+                    callback = function()
+                        UIManager:close(dialog)
+                        self:showClockTimeMenu()
+                    end,
+                },
+            },
+            {
+                {
+                    text = string.format(_("Bonus per move: %s"), bonusText(clockBonus())),
+                    callback = function()
+                        UIManager:close(dialog)
+                        self:showClockBonusMenu()
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
+end
+
+-- Lays `choices` out as rows of four buttons, ticking the one equal to
+-- `current`, and ends with a "Custom" button that calls `on_custom`.
+function DiceChessWidget:showChoiceMenu(title, choices, current, label, on_choose, on_custom)
+    local dialog
+    local buttons = { {} }
+    local function add(text, callback)
+        if #buttons[#buttons] == 4 then
+            table.insert(buttons, {})
+        end
+        table.insert(buttons[#buttons], {
+            text = text,
+            callback = function()
+                UIManager:close(dialog)
+                callback()
+            end,
         })
     end
+    local is_custom = true
+    for _, value in ipairs(choices) do
+        local text = label(value)
+        if value == current then
+            text = text .. " ✓"
+            is_custom = false
+        end
+        add(text, function() on_choose(value) end)
+    end
+    add(is_custom and label(current) .. " ✓" or _("Custom"), on_custom)
     dialog = ButtonDialog:new{
-        title = _("Time per player. Choosing one resets both clocks."),
+        title = title,
         title_align = "center",
         buttons = buttons,
     }
     UIManager:show(dialog)
+end
+
+function DiceChessWidget:showClockTimeMenu()
+    local current = clockTime()
+    self:showChoiceMenu(_("Time per player. Choosing one resets both clocks."),
+        CLOCK_TIME_CHOICES, current, formatClock,
+        function(seconds) self:setClock(true, seconds) end,
+        function()
+            UIManager:show(DoubleSpinWidget:new{
+                title_text = _("Time per player"),
+                left_text = _("Minutes"),
+                left_value = math.floor(current / 60),
+                left_min = 0,
+                left_max = 90,
+                left_hold_step = 5,
+                right_text = _("Seconds"),
+                right_value = current % 60,
+                right_min = 0,
+                right_max = 59,
+                right_hold_step = 10,
+                ok_always_enabled = true,
+                callback = function(minutes, seconds)
+                    -- Never less than five seconds, so 0:00 cannot be set.
+                    self:setClock(true, math.max(minutes * 60 + seconds, 5))
+                end,
+            })
+        end)
+end
+
+function DiceChessWidget:showClockBonusMenu()
+    local current = clockBonus()
+    self:showChoiceMenu(_("Seconds a player gets back for each move"),
+        CLOCK_BONUS_CHOICES, current, bonusText,
+        function(seconds) self:setClockBonus(seconds) end,
+        function()
+            UIManager:show(SpinWidget:new{
+                title_text = _("Bonus per move"),
+                value = current,
+                value_min = 0,
+                value_max = 120,
+                value_hold_step = 10,
+                unit = _("s"),
+                ok_always_enabled = true,
+                callback = function(spin)
+                    self:setClockBonus(spin.value)
+                end,
+            })
+        end)
 end
 
 function DiceChessWidget:confirmNewGame()
@@ -426,9 +539,8 @@ end
 
 function DiceChessWidget:resetClock()
     UIManager:unschedule(self.tick)
-    local minutes = G_reader_settings:readSetting(CLOCK_SETTING, 0)
-    if minutes > 0 then
-        self.clock_left = { [Rules.WHITE] = minutes * 60, [Rules.BLACK] = minutes * 60 }
+    if G_reader_settings:isTrue(CLOCK_ON_SETTING) then
+        self.clock_left = { [Rules.WHITE] = clockTime(), [Rules.BLACK] = clockTime() }
     else
         self.clock_left = nil
     end
@@ -436,8 +548,13 @@ function DiceChessWidget:resetClock()
     self.turn_start = nil
 end
 
-function DiceChessWidget:setClockMinutes(minutes)
-    G_reader_settings:saveSetting(CLOCK_SETTING, minutes)
+-- Switches the clock on or off, optionally with a new time per player.
+-- Either way both clocks start again from the full time.
+function DiceChessWidget:setClock(on, seconds)
+    G_reader_settings:saveSetting(CLOCK_ON_SETTING, on)
+    if seconds then
+        G_reader_settings:saveSetting(CLOCK_TIME_SETTING, seconds)
+    end
     self:resetClock()
     self:computeLayout()
     -- Mid-turn the new clock starts right away, otherwise on the next roll.
@@ -445,6 +562,11 @@ function DiceChessWidget:setClockMinutes(minutes)
         self:startClock()
     end
     self:render("full")
+end
+
+-- Takes effect from the next move on, without touching the running clocks.
+function DiceChessWidget:setClockBonus(seconds)
+    G_reader_settings:saveSetting(CLOCK_BONUS_SETTING, seconds)
 end
 
 function DiceChessWidget:remaining(color)
@@ -568,9 +690,6 @@ function DiceChessWidget:rollDice()
         self.forfeit = nil
         self.dice_value = col
         self.movable = movable
-        if #movable == 1 then
-            self.selected = movable[1]
-        end
     end
     self:render()
 end
@@ -613,6 +732,9 @@ function DiceChessWidget:commitMove(move, promotion_type)
         self.winner = moved_piece.color
         self:render("full")
     else
+        if self.clock_left then
+            self.clock_left[self.current_player] = self.clock_left[self.current_player] + clockBonus()
+        end
         self.current_player = Rules.opponent(self.current_player)
         self:startClock()
         -- "partial" lets KOReader flash on its own full-refresh schedule
