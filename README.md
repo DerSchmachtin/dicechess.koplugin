@@ -20,7 +20,7 @@ Open it from **Tools → More tools → Dice Chess**.
 3. **Move**: tap one of those pieces, then tap the square to move it to. Empty target squares show a dot, capturable pieces a thick border on gray. If only one piece can move it is selected for you. If nothing in that column can move, the turn passes: the status line says so and the forfeited die face stays gray until the next roll.
 4. **Promotion**: a pawn reaching the far row gets a choice of Queen, Rook, Bishop or Knight.
 
-**New Game** starts over after a confirmation. Closing the plugin keeps the game: reopening it continues where you left off, until KOReader itself is restarted.
+**New Game** is in the menu at the top left (☰) and starts over after a confirmation. Closing the plugin keeps the game: reopening it continues where you left off, until KOReader itself is restarted.
 
 White sits at the bottom edge, Black at the top. Each player has their own status line at their edge (Black's is upside-down), and the Roll Dice and piece-choice buttons only appear at the edge of the player whose turn it is; the other player sees "Waiting for …". The columns are labelled with die faces instead of digits, so they read the same from both seats.
 

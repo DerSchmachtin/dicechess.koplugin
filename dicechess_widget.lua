@@ -11,6 +11,7 @@ Board logic lives in dicechess_rules; this module is presentation and input.
 
 local Blitbuffer = require("ffi/blitbuffer")
 local Button = require("ui/widget/button")
+local ButtonDialog = require("ui/widget/buttondialog")
 local CenterContainer = require("ui/widget/container/centercontainer")
 local ConfirmBox = require("ui/widget/confirmbox")
 local Device = require("device")
@@ -53,7 +54,6 @@ local PIECE_CHOICES = {
 
 local STARTING_POOL = { Q = 1, R = 2, B = 2, N = 2 }
 
-local MAX_CELL_NOMINAL = 46
 local MESSAGE_FONT_SIZE = 17
 local DICE_FONT_SIZE = 26
 
@@ -190,22 +190,19 @@ function DiceChessWidget:computeLayout()
     local sample_button = Button:new{ text = _("Roll Dice"), width = Screen:scaleBySize(160) }
     local controls_h = sample_button:getSize().h
     sample_button:free()
-    local restart_h = controls_h
 
     -- Bands, top to bottom: title, message(top), controls(top), column
-    -- labels, board, column labels, controls(bottom), message(bottom),
-    -- restart. The label strips sit flush against the board, which leaves
-    -- 6 gaps. The top message/controls belong to Black, the bottom ones to
-    -- White.
-    local used_h = title_h + message_h * 2 + controls_h * 2 + label_h * 2 + restart_h + vpad * 6
+    -- labels, board, column labels, controls(bottom), message(bottom).
+    -- The label strips sit flush against the board, which leaves 5 gaps
+    -- (the last one below the bottom message). The top message/controls
+    -- belong to Black, the bottom ones to White.
+    local used_h = title_h + message_h * 2 + controls_h * 2 + label_h * 2 + vpad * 5
 
     local avail_w = self.dimen.w - 2 * Size.margin.default
     local avail_h = self.dimen.h - used_h
     if avail_h < Rules.ROWS then avail_h = Rules.ROWS end
 
     local cell_size = math.floor(math.min(avail_w / Rules.COLS, avail_h / Rules.ROWS))
-    local max_cell = math.floor(Screen:scaleBySize(MAX_CELL_NOMINAL))
-    if cell_size > max_cell then cell_size = max_cell end
     if cell_size < 1 then cell_size = 1 end
 
     self.layout = {
@@ -214,7 +211,6 @@ function DiceChessWidget:computeLayout()
         message_h = message_h,
         label_h = label_h,
         controls_h = controls_h,
-        restart_h = restart_h,
         cell_size = cell_size,
     }
 end
@@ -239,6 +235,24 @@ function DiceChessWidget:newGame()
     self.winner = nil
     self.started = false
     self:render("full")
+end
+
+function DiceChessWidget:showMenu()
+    local dialog
+    dialog = ButtonDialog:new{
+        buttons = {
+            {
+                {
+                    text = _("New Game"),
+                    callback = function()
+                        UIManager:close(dialog)
+                        self:confirmNewGame()
+                    end,
+                },
+            },
+        },
+    }
+    UIManager:show(dialog)
 end
 
 function DiceChessWidget:confirmNewGame()
@@ -646,6 +660,8 @@ function DiceChessWidget:render(refresh)
         align = "center",
         title = _("Dice Chess"),
         with_bottom_line = true,
+        left_icon = "appbar.menu",
+        left_icon_tap_callback = function() self:showMenu() end,
         close_callback = function() self:onClose() end,
         show_parent = self,
     }
@@ -656,13 +672,6 @@ function DiceChessWidget:render(refresh)
     local controls_bottom = self:buildControls(Rules.WHITE)
         or VerticalSpan:new{ width = self.layout.controls_h }
     local message_bottom = self:buildMessage(self:statusText(Rules.WHITE), false)
-
-    local restart_button = Button:new{
-        text = _("New Game"),
-        callback = function() self:confirmNewGame() end,
-        width = Screen:scaleBySize(140),
-        text_font_size = 16,
-    }
 
     local content = VerticalGroup:new{
         title,
@@ -678,8 +687,6 @@ function DiceChessWidget:render(refresh)
         controls_bottom,
         VerticalSpan:new{ width = vpad },
         message_bottom,
-        VerticalSpan:new{ width = vpad },
-        restart_button,
     }
 
     -- The old tree is freed on the next tick, not right away: render() is
