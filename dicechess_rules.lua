@@ -5,8 +5,6 @@ be moved from. Pure Lua, no KOReader dependencies, so it can be exercised
 by a standalone interpreter as well as from the plugin UI.
 ]]
 
-math.randomseed(os.time())
-
 local COLS = 6
 local ROWS = 8
 

@@ -15,14 +15,14 @@ Each turn a die decides which column you may move from, so a good plan can be ru
 
 Open it from **Tools → More tools → Dice Chess**.
 
-1. **Draft**: the status line says whose turn it is to place ("White: place your King", then "choose a piece"). Pick a piece and tap a free square on your back row.
-2. **Roll**: tap **Roll Dice**. The status line shows the column, e.g. "Column 4: tap a piece".
-3. **Move**: tap one of your pieces in that column, then tap the square to move it to. If nothing in that column can move, the turn passes and the status line notes the forfeit.
+1. **Draft**: your status line says what to do ("White: place your King", then "choose a piece"). Pick a piece and tap a free square on your back row. Until you place it you can still pick a different piece.
+2. **Roll**: tap **Roll Dice**. The rolled column's die face above and below the board turns black, and every piece you may move gets a thick border.
+3. **Move**: tap one of those pieces, then tap the square to move it to. Empty target squares show a dot, capturable pieces a thick border on gray. If only one piece can move it is selected for you. If nothing in that column can move, the turn passes: the status line says so and the forfeited die face stays gray until the next roll.
 4. **Promotion**: a pawn reaching the far row gets a choice of Queen, Rook, Bishop or Knight.
 
-**New Game** starts over after a confirmation. The game is not saved when you close the plugin.
+**New Game** starts over after a confirmation. Closing the plugin keeps the game: reopening it continues where you left off, until KOReader itself is restarted.
 
-Because both players share one device, the status text is shown twice (normal near White's edge, upside-down near Black's edge) and the Roll Dice and piece-choice controls are duplicated on both sides, so each player can read and act from their own seat.
+White sits at the bottom edge, Black at the top. Each player has their own status line at their edge (Black's is upside-down), and the Roll Dice and piece-choice buttons only appear at the edge of the player whose turn it is; the other player sees "Waiting for …". The columns are labelled with die faces instead of digits, so they read the same from both seats.
 
 ## Install
 
@@ -37,7 +37,7 @@ Because both players share one device, the status text is shown twice (normal ne
 ## Structure
 
 - `dicechess_rules.lua`: board representation and move generation, no KOReader dependency.
-- `dicechess_fliptext.lua`: renders an upside-down-readable copy of a status string for the player on the far side of the board.
+- `dicechess_fliptext.lua`: renders an upside-down-readable copy of a string for the player on the far side of the board.
 - `dicechess_widget.lua`: the full-screen UI: setup draft, board, dice roll, move selection, promotion.
 - `main.lua` / `_meta.lua`: plugin registration.
 

@@ -2,9 +2,10 @@
 Full-screen UI for Wuerfelschach (Dice Chess): handles both the alternating
 setup phase (choose King square, then draft the rest of the back row from a
 real chess set's piece pool) and the main game (roll a die, move a piece
-from the rolled column, capture the enemy King to win). The status text is
-shown twice -- once normal near White's edge, once upside-down near Black's
-edge -- so both players can read it from their own seat at a shared device.
+from the rolled column, capture the enemy King to win). White sits at the
+bottom edge, Black at the top edge. Each player has a status line at their
+own edge (Black's is rendered upside-down), and the action buttons only
+appear at the edge of the player whose turn it is.
 Board logic lives in dicechess_rules; this module is presentation and input.
 ]]
 
@@ -37,7 +38,11 @@ local GLYPH = {
     [Rules.BLACK] = { K = "♚", Q = "♛", R = "♜", B = "♝", N = "♞", P = "♟" },
 }
 
+-- Die faces double as column labels: unlike digits they read the same from
+-- both ends of the board, so neither player has to count columns.
 local DIE_FACE = { "⚀", "⚁", "⚂", "⚃", "⚄", "⚅" }
+
+local TARGET_DOT = "•"
 
 local PIECE_CHOICES = {
     { type = "Q", text = _("Queen") },
@@ -52,19 +57,39 @@ local MAX_CELL_NOMINAL = 46
 local MESSAGE_FONT_SIZE = 17
 local DICE_FONT_SIZE = 26
 
+-- Everything that makes up a game in progress. Copied out when the widget
+-- closes and back in when it is reopened, so closing does not lose the game.
+local STATE_KEYS = {
+    "board", "last_double_step", "phase", "setup_turn", "setup_pending_piece",
+    "setup_placed", "piece_pool", "current_player", "dice_value", "movable",
+    "selected", "forfeit", "awaiting_promotion_move", "winner", "started",
+}
+local saved_state = nil
+
 local function colorName(color)
     return color == Rules.WHITE and _("White") or _("Black")
+end
+
+local function pieceLabel(ptype)
+    for _, c in ipairs(PIECE_CHOICES) do
+        if c.type == ptype then return c.text end
+    end
+    return ptype
 end
 
 -- A minimal tappable board square: a bordered box with a centered glyph.
 local BoardCell = InputContainer:extend{
     text = "",
     background = nil,
+    bordersize = nil,
+    inverted = false,
     size = 0,
     callback = nil,
 }
 
 function BoardCell:init()
+    local border = self.bordersize or Size.border.thin
+    local inner = self.size - 2 * border
     local scale = Screen:scaleBySize(1)
     local font_size = math.floor((self.size * 0.7) / scale)
     if font_size < 6 then font_size = 6 end
@@ -73,16 +98,16 @@ function BoardCell:init()
         width = self.size,
         height = self.size,
         margin = 0,
-        bordersize = Size.border.thin,
+        bordersize = border,
         color = Blitbuffer.COLOR_BLACK,
-        background = self.background or Blitbuffer.COLOR_WHITE,
+        background = self.inverted and Blitbuffer.COLOR_BLACK or self.background or Blitbuffer.COLOR_WHITE,
         padding = 0,
         CenterContainer:new{
-            dimen = Geom:new{ w = self.size, h = self.size },
+            dimen = Geom:new{ w = inner, h = inner },
             TextWidget:new{
                 text = self.text,
                 face = Font:getFace("cfont", font_size),
-                fgcolor = Blitbuffer.COLOR_BLACK,
+                fgcolor = self.inverted and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
             },
         },
     }
@@ -113,7 +138,14 @@ function DiceChessWidget:init()
         self.key_events.Close = { { Device.input.group.Back } }
     end
     self:computeLayout()
-    self:newGame()
+    if saved_state then
+        for _, key in ipairs(STATE_KEYS) do
+            self[key] = saved_state[key]
+        end
+        self:render("full")
+    else
+        self:newGame()
+    end
 end
 
 -- Measures every fixed-height UI band exactly once, using worst-case
@@ -133,32 +165,39 @@ function DiceChessWidget:computeLayout()
         show_parent = self,
     }
     local title_h = title:getSize().h
+    title:free()
 
     local msg_width = self.dimen.w - 2 * Size.padding.large
+    local longest_message = string.format(_("%s rolled %s, no move."), colorName(Rules.BLACK), DIE_FACE[6])
+        .. " " .. string.format(_("Waiting for %s"), colorName(Rules.WHITE))
     local sample_message = TextBoxWidget:new{
-        text = _("White forfeits (col 6)"),
+        text = longest_message,
         face = Font:getFace("cfont", MESSAGE_FONT_SIZE),
         width = msg_width,
         alignment = "center",
         fgcolor = Blitbuffer.COLOR_BLACK,
     }
     local message_h = sample_message:getSize().h
+    sample_message:free()
 
     local dice_sample = TextWidget:new{
         text = DIE_FACE[6],
         face = Font:getFace("cfont", DICE_FONT_SIZE),
     }
-    local dice_h = dice_sample:getSize().h
+    local label_h = dice_sample:getSize().h
+    dice_sample:free()
 
     local sample_button = Button:new{ text = _("Roll Dice"), width = Screen:scaleBySize(160) }
     local controls_h = sample_button:getSize().h
+    sample_button:free()
     local restart_h = controls_h
 
-    -- Bands, top to bottom: title, message(top), controls(top), dice(top),
-    -- board, dice(bottom), controls(bottom), message(bottom), restart --
-    -- 8 gaps between them. Controls and message are duplicated top/bottom
-    -- so both seated players can read status and act from their own edge.
-    local used_h = title_h + message_h * 2 + controls_h * 2 + dice_h * 2 + restart_h + vpad * 8
+    -- Bands, top to bottom: title, message(top), controls(top), column
+    -- labels, board, column labels, controls(bottom), message(bottom),
+    -- restart. The label strips sit flush against the board, which leaves
+    -- 6 gaps. The top message/controls belong to Black, the bottom ones to
+    -- White.
+    local used_h = title_h + message_h * 2 + controls_h * 2 + label_h * 2 + restart_h + vpad * 6
 
     local avail_w = self.dimen.w - 2 * Size.margin.default
     local avail_h = self.dimen.h - used_h
@@ -173,7 +212,7 @@ function DiceChessWidget:computeLayout()
         vpad = vpad,
         msg_width = msg_width,
         message_h = message_h,
-        dice_h = dice_h,
+        label_h = label_h,
         controls_h = controls_h,
         restart_h = restart_h,
         cell_size = cell_size,
@@ -195,14 +234,15 @@ function DiceChessWidget:newGame()
     self.dice_value = nil
     self.movable = nil
     self.selected = nil
-    self.status_note = nil
+    self.forfeit = nil
     self.awaiting_promotion_move = nil
     self.winner = nil
-    self:render(true)
+    self.started = false
+    self:render("full")
 end
 
 function DiceChessWidget:confirmNewGame()
-    if self.phase == "setup_king" and self.setup_placed[Rules.WHITE] == 0 and self.setup_placed[Rules.BLACK] == 0 then
+    if not self.started or self.phase == "gameover" then
         self:newGame()
         return
     end
@@ -213,6 +253,16 @@ function DiceChessWidget:confirmNewGame()
     })
 end
 
+-- The player who has to act next, or nil once the game is over.
+function DiceChessWidget:activeColor()
+    if self.phase == "gameover" then
+        return nil
+    elseif self.phase == "playing" then
+        return self.current_player
+    end
+    return self.setup_turn
+end
+
 -- ---------------------------------------------------------------------
 -- State transitions
 -- ---------------------------------------------------------------------
@@ -220,6 +270,7 @@ end
 function DiceChessWidget:placeSetupPiece(row, col)
     local ptype = self.phase == "setup_king" and "K" or self.setup_pending_piece
     self.board[row][col] = { color = self.setup_turn, type = ptype, moved = false }
+    self.started = true
 
     if self.phase == "setup_king" then
         if self.setup_turn == Rules.WHITE then
@@ -251,15 +302,19 @@ function DiceChessWidget:rollDice()
     local movable = Rules.movablePiecesInColumn(self.board, self.current_player, col, self.last_double_step)
     self.selected = nil
     if #movable == 0 then
-        local forfeited_color = self.current_player
-        self.status_note = string.format(_("%s forfeits (col %d)"), colorName(forfeited_color), col)
+        self.forfeit = { color = self.current_player, col = col }
         self.current_player = Rules.opponent(self.current_player)
         self.dice_value = nil
         self.movable = nil
+        -- A forfeited turn still uses up the opponent's en passant chance.
+        self.last_double_step = false
     else
-        self.status_note = nil
+        self.forfeit = nil
         self.dice_value = col
         self.movable = movable
+        if #movable == 1 then
+            self.selected = movable[1]
+        end
     end
     self:render()
 end
@@ -295,14 +350,17 @@ function DiceChessWidget:commitMove(move, promotion_type)
     self.dice_value = nil
     self.movable = nil
     self.awaiting_promotion_move = nil
-    self.status_note = nil
+    self.forfeit = nil
     if captured and captured.type == "K" then
         self.phase = "gameover"
         self.winner = moved_piece.color
+        self:render("full")
     else
         self.current_player = Rules.opponent(self.current_player)
+        -- "partial" lets KOReader flash on its own full-refresh schedule
+        -- instead of flashing the whole screen on every single move.
+        self:render("partial")
     end
-    self:render(true)
 end
 
 function DiceChessWidget:onClose()
@@ -311,6 +369,10 @@ function DiceChessWidget:onClose()
 end
 
 function DiceChessWidget:onCloseWidget()
+    saved_state = {}
+    for _, key in ipairs(STATE_KEYS) do
+        saved_state[key] = self[key]
+    end
     UIManager:setDirty(nil, "full")
 end
 
@@ -318,128 +380,183 @@ end
 -- Board interaction helpers
 -- ---------------------------------------------------------------------
 
-function DiceChessWidget:cellCallback(row, col)
-    if self.phase == "setup_king" or self.phase == "setup_piece" then
-        if self.board[row][col] then return nil end
-        if row ~= Rules.backRow(self.setup_turn) then return nil end
-        if self.phase == "setup_piece" and not self.setup_pending_piece then return nil end
-        return function() self:placeSetupPiece(row, col) end
-    elseif self.phase == "playing" and not self.awaiting_promotion_move then
-        if self.selected then
-            if row == self.selected.row and col == self.selected.col then
-                return function() self:deselect() end
-            end
-            for _, m in ipairs(self.selected.moves) do
-                if m.to_row == row and m.to_col == col then
-                    return function() self:makeMove(m) end
-                end
-            end
-            return nil
-        elseif self.movable then
-            for _, mp in ipairs(self.movable) do
-                if mp.row == row and mp.col == col then
-                    return function() self:selectPiece(mp) end
-                end
-            end
-            return nil
+function DiceChessWidget:movableAt(row, col)
+    if not self.movable then return nil end
+    for _, mp in ipairs(self.movable) do
+        if mp.row == row and mp.col == col then
+            return mp
         end
     end
     return nil
 end
 
-function DiceChessWidget:cellBackground(row, col)
-    local base = ((row + col) % 2 == 0) and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_GRAY_E
-
-    if self.phase == "setup_king" or self.phase == "setup_piece" then
-        local eligible = not self.board[row][col] and row == Rules.backRow(self.setup_turn)
-            and (self.phase == "setup_king" or self.setup_pending_piece)
-        return eligible and Blitbuffer.COLOR_LIGHT_GRAY or base
-    elseif self.phase == "playing" then
-        if self.selected then
-            if self.selected.row == row and self.selected.col == col then
-                return Blitbuffer.COLOR_GRAY_9
-            end
-            for _, m in ipairs(self.selected.moves) do
-                if m.to_row == row and m.to_col == col then
-                    return Blitbuffer.COLOR_LIGHT_GRAY
-                end
-            end
-        elseif self.movable then
-            for _, mp in ipairs(self.movable) do
-                if mp.row == row and mp.col == col then
-                    return Blitbuffer.COLOR_GRAY_D
-                end
-            end
+function DiceChessWidget:selectedMoveTo(row, col)
+    if not self.selected then return nil end
+    for _, m in ipairs(self.selected.moves) do
+        if m.to_row == row and m.to_col == col then
+            return m
         end
     end
-    return base
+    return nil
+end
+
+function DiceChessWidget:isSetupSquare(row, col)
+    if self.phase ~= "setup_king" and self.phase ~= "setup_piece" then return false end
+    if self.board[row][col] then return false end
+    if row ~= Rules.backRow(self.setup_turn) then return false end
+    return self.phase == "setup_king" or self.setup_pending_piece ~= nil
+end
+
+function DiceChessWidget:cellCallback(row, col)
+    if self:isSetupSquare(row, col) then
+        return function() self:placeSetupPiece(row, col) end
+    elseif self.phase == "playing" and not self.awaiting_promotion_move then
+        if self.selected and row == self.selected.row and col == self.selected.col then
+            return function() self:deselect() end
+        end
+        local move = self:selectedMoveTo(row, col)
+        if move then
+            return function() self:makeMove(move) end
+        end
+        -- Also reachable while another piece is selected, so the player can
+        -- switch pieces with one tap.
+        local mp = self:movableAt(row, col)
+        if mp then
+            return function() self:selectPiece(mp) end
+        end
+    end
+    return nil
+end
+
+-- Returns the background, border size, inversion flag and glyph for a
+-- square. The markers are deliberately coarse (thick border, inverted
+-- square, dot) because neighbouring gray levels are hard to tell apart on
+-- e-ink.
+function DiceChessWidget:cellAppearance(row, col)
+    local piece = self.board[row][col]
+    local look = {
+        background = ((row + col) % 2 == 0) and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_GRAY_E,
+        text = piece and GLYPH[piece.color][piece.type] or "",
+    }
+    local thick = Screen:scaleBySize(3)
+
+    if self:isSetupSquare(row, col) then
+        look.background = Blitbuffer.COLOR_LIGHT_GRAY
+    elseif self.phase == "playing" then
+        if self.selected and self.selected.row == row and self.selected.col == col then
+            look.inverted = true
+        elseif self:selectedMoveTo(row, col) then
+            if piece then
+                look.bordersize = thick
+                look.background = Blitbuffer.COLOR_LIGHT_GRAY
+            else
+                look.text = TARGET_DOT
+            end
+        elseif self:movableAt(row, col) then
+            look.bordersize = thick
+        end
+    end
+    return look
 end
 
 -- ---------------------------------------------------------------------
 -- Rendering
 -- ---------------------------------------------------------------------
 
-function DiceChessWidget:statusText()
-    if self.phase == "setup_king" then
-        return string.format(_("%s: place your King"), colorName(self.setup_turn))
-    elseif self.phase == "setup_piece" then
-        if self.setup_pending_piece then
-            local label = self.setup_pending_piece
-            for _, c in ipairs(PIECE_CHOICES) do
-                if c.type == self.setup_pending_piece then label = c.text end
-            end
-            return string.format(_("%s: place your %s"), colorName(self.setup_turn), label)
-        end
-        return string.format(_("%s: choose a piece"), colorName(self.setup_turn))
-    elseif self.phase == "playing" then
-        if self.awaiting_promotion_move then
-            return _("Promote your pawn")
-        end
-        if self.status_note then
-            return self.status_note
-        end
-        if self.selected then
-            return _("Tap a square to move")
-        elseif self.dice_value then
-            return string.format(_("Column %d: tap a piece"), self.dice_value)
-        else
-            return string.format(_("%s's turn"), colorName(self.current_player))
-        end
-    elseif self.phase == "gameover" then
+-- Status line for the player sitting on `seat`'s side. The active player is
+-- told what to do, the other one whom they are waiting for.
+function DiceChessWidget:statusText(seat)
+    if self.phase == "gameover" then
         return string.format(_("%s wins!"), colorName(self.winner))
     end
-    return ""
+
+    local active = self:activeColor()
+    local name = colorName(active)
+    local text
+    if seat ~= active then
+        text = string.format(_("Waiting for %s"), name)
+    elseif self.phase == "setup_king" then
+        text = string.format(_("%s: place your King"), name)
+    elseif self.phase == "setup_piece" then
+        if self.setup_pending_piece then
+            text = string.format(_("%s: place your %s"), name, pieceLabel(self.setup_pending_piece))
+        else
+            text = string.format(_("%s: choose a piece"), name)
+        end
+    elseif self.awaiting_promotion_move then
+        text = string.format(_("%s: promote your pawn"), name)
+    elseif self.selected then
+        text = string.format(_("%s: tap a square to move"), name)
+    elseif self.dice_value then
+        text = string.format(_("%s: column %s, tap a piece"), name, DIE_FACE[self.dice_value])
+    else
+        text = string.format(_("%s: roll the dice"), name)
+    end
+
+    if self.forfeit then
+        text = string.format(_("%s rolled %s, no move."), colorName(self.forfeit.color), DIE_FACE[self.forfeit.col])
+            .. " " .. text
+    end
+    return text
 end
 
-function DiceChessWidget:pieceChoiceRow(on_choose, pool, flip_labels)
-    local group = HorizontalGroup:new{}
-    local first = true
+-- `opts.counts` limits the row to piece types still available and shows
+-- how many are left (as repeated glyphs, which need no upside-down digits);
+-- `opts.chosen` marks the currently picked type; `opts.flip` renders the
+-- row for the player at the top edge.
+function DiceChessWidget:pieceChoiceRow(on_choose, opts)
+    local buttons = {}
     for _, c in ipairs(PIECE_CHOICES) do
-        local count = pool and pool[c.type]
-        if not pool or count > 0 then
-            if not first then
-                table.insert(group, HorizontalSpan:new{ width = Size.span.horizontal_default })
-            end
-            first = false
-            local label = pool and string.format("%s (%d)", c.text, count) or c.text
-            if flip_labels then label = Flip.flip(label) end
-            table.insert(group, Button:new{
+        local count = opts.counts and opts.counts[c.type] or 1
+        if count > 0 then
+            local label = c.text .. " " .. string.rep(GLYPH[opts.color][c.type], count)
+            if opts.flip then label = Flip.flip(label) end
+            local button = Button:new{
                 text = label,
+                preselect = opts.chosen == c.type,
                 callback = function() on_choose(c.type) end,
-            })
+            }
+            -- Mirror the order as well, so both players see the same row.
+            if opts.flip then
+                table.insert(buttons, 1, button)
+            else
+                table.insert(buttons, button)
+            end
         end
+    end
+
+    local group = HorizontalGroup:new{}
+    for i, button in ipairs(buttons) do
+        if i > 1 then
+            table.insert(group, HorizontalSpan:new{ width = Size.span.horizontal_default })
+        end
+        table.insert(group, button)
     end
     return group
 end
 
-function DiceChessWidget:buildControls(flip_labels)
-    if self.phase == "setup_piece" and not self.setup_pending_piece then
-        return self:pieceChoiceRow(function(ptype) self:choosePendingPiece(ptype) end, self.piece_pool[self.setup_turn], flip_labels)
+-- Action buttons for `seat`'s edge of the board. Only the player whose turn
+-- it is gets any, which both shows whose turn it is and stops the other
+-- player from acting for them.
+function DiceChessWidget:buildControls(seat)
+    if seat ~= self:activeColor() then return nil end
+    local flip = seat == Rules.BLACK
+
+    if self.phase == "setup_piece" then
+        return self:pieceChoiceRow(function(ptype) self:choosePendingPiece(ptype) end, {
+            counts = self.piece_pool[seat],
+            chosen = self.setup_pending_piece,
+            color = seat,
+            flip = flip,
+        })
     elseif self.phase == "playing" then
         if self.awaiting_promotion_move then
-            return self:pieceChoiceRow(function(ptype) self:choosePromotion(ptype) end, nil, flip_labels)
+            return self:pieceChoiceRow(function(ptype) self:choosePromotion(ptype) end, {
+                color = seat,
+                flip = flip,
+            })
         elseif not self.dice_value then
-            local label = flip_labels and Flip.flip(_("Roll Dice")) or _("Roll Dice")
+            local label = flip and Flip.flip(_("Roll Dice")) or _("Roll Dice")
             return Button:new{
                 text = label,
                 callback = function() self:rollDice() end,
@@ -456,12 +573,13 @@ function DiceChessWidget:buildBoard()
     for row = Rules.ROWS, 1, -1 do
         local row_group = HorizontalGroup:new{}
         for col = 1, Rules.COLS do
-            local piece = self.board[row][col]
-            local text = piece and GLYPH[piece.color][piece.type] or ""
+            local look = self:cellAppearance(row, col)
             table.insert(row_group, BoardCell:new{
-                text = text,
+                text = look.text,
                 size = cell_size,
-                background = self:cellBackground(row, col),
+                background = look.background,
+                bordersize = look.bordersize,
+                inverted = look.inverted,
                 callback = self:cellCallback(row, col),
             })
         end
@@ -470,9 +588,42 @@ function DiceChessWidget:buildBoard()
     return rows_group
 end
 
+-- A strip of die faces naming the columns. The rolled column is inverted;
+-- a roll that was just forfeited stays visible in gray until the next roll.
+function DiceChessWidget:buildColumnLabels()
+    local group = HorizontalGroup:new{}
+    for col = 1, Rules.COLS do
+        local rolled = self.phase == "playing" and self.dice_value == col
+        local forfeited = self.phase == "playing" and self.forfeit and self.forfeit.col == col
+        local background = Blitbuffer.COLOR_WHITE
+        if rolled then
+            background = Blitbuffer.COLOR_BLACK
+        elseif forfeited then
+            background = Blitbuffer.COLOR_LIGHT_GRAY
+        end
+        table.insert(group, FrameContainer:new{
+            width = self.layout.cell_size,
+            height = self.layout.label_h,
+            margin = 0,
+            bordersize = 0,
+            padding = 0,
+            background = background,
+            CenterContainer:new{
+                dimen = Geom:new{ w = self.layout.cell_size, h = self.layout.label_h },
+                TextWidget:new{
+                    text = DIE_FACE[col],
+                    face = Font:getFace("cfont", DICE_FONT_SIZE),
+                    fgcolor = rolled and Blitbuffer.COLOR_WHITE or Blitbuffer.COLOR_BLACK,
+                },
+            },
+        })
+    end
+    return group
+end
+
 -- `flip_for_head` renders an upside-down copy (via Unicode lookalike
 -- glyphs) for the player sitting at the board's far end ("the head"), so
--- both seated players can read the current status right-side up.
+-- both seated players can read their status right-side up.
 function DiceChessWidget:buildMessage(text, flip_for_head)
     return TextBoxWidget:new{
         text = flip_for_head and Flip.flip(text) or text,
@@ -486,21 +637,9 @@ function DiceChessWidget:buildMessage(text, flip_for_head)
     }
 end
 
-function DiceChessWidget:buildDiceIndicator()
-    local text = self.dice_value and DIE_FACE[self.dice_value] or ""
-    return CenterContainer:new{
-        dimen = Geom:new{ w = self.dimen.w, h = self.layout.dice_h },
-        TextWidget:new{
-            text = text,
-            face = Font:getFace("cfont", DICE_FONT_SIZE),
-            fgcolor = Blitbuffer.COLOR_BLACK,
-        },
-    }
-end
-
-function DiceChessWidget:render(full_refresh)
+-- `refresh` is the UIManager refresh type, "ui" unless given.
+function DiceChessWidget:render(refresh)
     local vpad = self.layout.vpad
-    local status = self:statusText()
 
     local title = TitleBar:new{
         width = self.dimen.w,
@@ -511,15 +650,12 @@ function DiceChessWidget:render(full_refresh)
         show_parent = self,
     }
 
-    local message_top = self:buildMessage(status, true)
-    local controls_top = self:buildControls(true)
-    local controls_top_slot = controls_top or VerticalSpan:new{ width = self.layout.controls_h }
-    local dice_top = self:buildDiceIndicator()
-    local board = self:buildBoard()
-    local dice_bottom = self:buildDiceIndicator()
-    local controls_bottom = self:buildControls(false)
-    local controls_bottom_slot = controls_bottom or VerticalSpan:new{ width = self.layout.controls_h }
-    local message_bottom = self:buildMessage(status, false)
+    local message_top = self:buildMessage(self:statusText(Rules.BLACK), true)
+    local controls_top = self:buildControls(Rules.BLACK)
+        or VerticalSpan:new{ width = self.layout.controls_h }
+    local controls_bottom = self:buildControls(Rules.WHITE)
+        or VerticalSpan:new{ width = self.layout.controls_h }
+    local message_bottom = self:buildMessage(self:statusText(Rules.WHITE), false)
 
     local restart_button = Button:new{
         text = _("New Game"),
@@ -533,20 +669,26 @@ function DiceChessWidget:render(full_refresh)
         VerticalSpan:new{ width = vpad },
         message_top,
         VerticalSpan:new{ width = vpad },
-        controls_top_slot,
+        controls_top,
         VerticalSpan:new{ width = vpad },
-        dice_top,
+        self:buildColumnLabels(),
+        self:buildBoard(),
+        self:buildColumnLabels(),
         VerticalSpan:new{ width = vpad },
-        board,
-        VerticalSpan:new{ width = vpad },
-        dice_bottom,
-        VerticalSpan:new{ width = vpad },
-        controls_bottom_slot,
+        controls_bottom,
         VerticalSpan:new{ width = vpad },
         message_bottom,
         VerticalSpan:new{ width = vpad },
         restart_button,
     }
+
+    -- The old tree is freed on the next tick, not right away: render() is
+    -- usually running inside a tap handler of one of the old tree's own
+    -- buttons, which still touches itself after its callback returns.
+    local old = self[1]
+    if old then
+        UIManager:nextTick(function() old:free() end)
+    end
 
     self[1] = FrameContainer:new{
         width = self.dimen.w,
@@ -558,7 +700,7 @@ function DiceChessWidget:render(full_refresh)
         content,
     }
 
-    UIManager:setDirty(self, full_refresh and "full" or "ui")
+    UIManager:setDirty(self, refresh or "ui")
 end
 
 return DiceChessWidget
